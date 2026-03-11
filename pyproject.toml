@@ -1,0 +1,11 @@
+[project]
+name = "comfyui-inout"
+version = "0.1.0"
+description = "Schema-first input/output parameter nodes for ComfyUI workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.comfy]
+PublisherId = "local"
+DisplayName = "ComfyUI INOUT"
+Icon = ""

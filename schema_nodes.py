@@ -1,3 +1,12 @@
+import os
+import subprocess
+
+import cv2
+import folder_paths
+import numpy as np
+import torch
+from PIL import Image
+
 ROLE_OPTIONS = ["input", "output"]
 
 
@@ -39,6 +48,88 @@ def _numeric_constraints(gt, ge, lt, le, multiple_of):
     if multiple_of not in (None, 0, 0.0):
         constraints["multipleOf"] = multiple_of
     return constraints
+
+
+def _load_image(filename: str) -> torch.Tensor:
+    """Load image from input folder, return [1, H, W, C] float32 tensor."""
+    image_path = folder_paths.get_annotated_filepath(filename)
+    img = Image.open(image_path).convert("RGB")
+    img_np = np.array(img, dtype=np.float32) / 255.0
+    return torch.from_numpy(img_np).unsqueeze(0)  # [1, H, W, C]
+
+
+def _save_image(tensor: torch.Tensor, filename_prefix: str) -> list[dict]:
+    """Save [B, H, W, C] tensor to output folder, return file metadata."""
+    output_dir = folder_paths.get_output_directory()
+    full_output_folder, filename, counter, subfolder, prefix = \
+        folder_paths.get_save_image_path(filename_prefix, output_dir)
+
+    results = []
+    for i, img_tensor in enumerate(tensor):
+        img_np = (img_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        img = Image.fromarray(img_np)
+
+        file = f"{prefix}_{counter + i:05d}.png"
+        img.save(os.path.join(full_output_folder, file))
+        results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+
+    return results
+
+
+def _load_video(filename: str) -> torch.Tensor:
+    """Load video from input folder, return [N, H, W, C] float32 tensor."""
+    video_path = folder_paths.get_annotated_filepath(filename)
+    cap = cv2.VideoCapture(video_path)
+
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_np = np.array(frame_rgb, dtype=np.float32) / 255.0
+        frames.append(frame_np)
+    cap.release()
+
+    return torch.from_numpy(np.stack(frames))  # [N, H, W, C]
+
+
+def _save_video(
+    tensor: torch.Tensor, filename_prefix: str, frame_rate: float = 24.0
+) -> list[dict]:
+    """Save [N, H, W, C] tensor to output folder as video, return file metadata."""
+    output_dir = folder_paths.get_output_directory()
+    full_output_folder, filename, counter, subfolder, prefix = \
+        folder_paths.get_save_image_path(filename_prefix, output_dir)
+
+    file = f"{prefix}_{counter:05d}.mp4"
+    output_path = os.path.join(full_output_folder, file)
+
+    n, h, w, c = tensor.shape
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo",
+        "-vcodec", "rawvideo",
+        "-s", f"{w}x{h}",
+        "-pix_fmt", "rgb24",
+        "-r", str(frame_rate),
+        "-i", "-",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        output_path
+    ]
+
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    for frame in tensor:
+        frame_bytes = (
+            (frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8).tobytes()
+        )
+        proc.stdin.write(frame_bytes)
+    proc.stdin.close()
+    proc.wait()
+
+    return [{"filename": file, "subfolder": subfolder, "type": "output"}]
 
 
 class BaseSchemaParameterNode:
@@ -353,13 +444,22 @@ class BaseSchemaMediaParameter(BaseSchemaParameterNode):
     def type_required_inputs(cls):
         return {
             "accepted_formats": ("STRING", {"default": "", "multiline": True}),
+            "filename_prefix": ("STRING", {"default": "output"}),
         }
 
     @classmethod
     def optional_inputs(cls):
         return {
-            "value_in": (cls.output_type, {"forceInput": True}),
+            "value_in": ("*", {"forceInput": True}),  # Accept string or tensor
         }
+
+
+class SchemaImageParameter(BaseSchemaMediaParameter):
+    output_type = "IMAGE"
+    json_type = "image"
+    python_type = "IMAGE"
+    type_label = "image"
+    RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")
 
     def execute(
         self,
@@ -368,6 +468,7 @@ class BaseSchemaMediaParameter(BaseSchemaParameterNode):
         description,
         required,
         accepted_formats,
+        filename_prefix,
         value_in=None,
     ):
         field = self._field_schema(
@@ -379,24 +480,83 @@ class BaseSchemaMediaParameter(BaseSchemaParameterNode):
         formats = _clean_examples(accepted_formats)
         if formats:
             field["accepted_formats"] = formats
-        field["expects_connection"] = True
-        return (value_in, field)
 
+        if io_kind == "input":
+            # Input mode: value_in is filename string -> load to tensor
+            if value_in is None:
+                raise ValueError(f"Input image '{name}' requires a filename")
+            if isinstance(value_in, str):
+                image_tensor = _load_image(value_in)
+            else:
+                # Already a tensor (connected from another node)
+                image_tensor = value_in
+            return (image_tensor, field)
 
-class SchemaImageParameter(BaseSchemaMediaParameter):
-    output_type = "IMAGE"
-    json_type = "image"
-    python_type = "IMAGE"
-    type_label = "image"
-    RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")
+        else:  # io_kind == "output"
+            # Output mode: value_in is tensor -> save to file
+            if value_in is None:
+                raise ValueError(f"Output image '{name}' requires an image tensor")
+            file_info = _save_image(value_in, filename_prefix)
+            field["output_files"] = file_info
+            return (value_in, field)  # Pass through tensor, metadata in field
 
 
 class SchemaVideoParameter(BaseSchemaMediaParameter):
-    output_type = "VIDEO"
+    output_type = "IMAGE"  # VIDEO is batched IMAGE in VHS style
     json_type = "video"
     python_type = "VIDEO"
     type_label = "video"
-    RETURN_TYPES = ("VIDEO", "SCHEMA_FIELD")
+    RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")  # Returns IMAGE (batched frames)
+
+    @classmethod
+    def type_required_inputs(cls):
+        base = super().type_required_inputs()
+        base["frame_rate"] = (
+            "FLOAT",
+            {"default": 24.0, "min": 1.0, "max": 120.0, "step": 0.1},
+        )
+        return base
+
+    def execute(
+        self,
+        name,
+        io_kind,
+        description,
+        required,
+        accepted_formats,
+        filename_prefix,
+        frame_rate,
+        value_in=None,
+    ):
+        field = self._field_schema(
+            name=name,
+            io_kind=io_kind,
+            description=description,
+            required=required,
+        )
+        formats = _clean_examples(accepted_formats)
+        if formats:
+            field["accepted_formats"] = formats
+        field["frame_rate"] = frame_rate
+
+        if io_kind == "input":
+            # Input mode: value_in is filename string -> load to tensor
+            if value_in is None:
+                raise ValueError(f"Input video '{name}' requires a filename")
+            if isinstance(value_in, str):
+                video_tensor = _load_video(value_in)
+            else:
+                # Already a tensor (connected from another node)
+                video_tensor = value_in
+            return (video_tensor, field)
+
+        else:  # io_kind == "output"
+            # Output mode: value_in is tensor -> save to file
+            if value_in is None:
+                raise ValueError(f"Output video '{name}' requires a video tensor")
+            file_info = _save_video(value_in, filename_prefix, frame_rate)
+            field["output_files"] = file_info
+            return (value_in, field)  # Pass through tensor, metadata in field
 
 
 class SchemaAudioParameter(BaseSchemaMediaParameter):

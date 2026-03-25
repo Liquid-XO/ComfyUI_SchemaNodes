@@ -132,6 +132,21 @@ def _save_video(
     return [{"filename": file, "subfolder": subfolder, "type": "output"}]
 
 
+def _save_text(text: str, filename_prefix: str) -> list[dict]:
+    """Save text string to output folder, return file metadata."""
+    output_dir = folder_paths.get_output_directory()
+    full_output_folder, filename, counter, subfolder, prefix = \
+        folder_paths.get_save_image_path(filename_prefix, output_dir)
+
+    file = f"{prefix}_{counter:05d}.txt"
+    filepath = os.path.join(full_output_folder, file)
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(text)
+
+    return [{"filename": file, "subfolder": subfolder, "type": "output"}]
+
+
 class BaseSchemaParameterNode:
     CATEGORY = "inout/schema"
     FUNCTION = "execute"
@@ -246,6 +261,12 @@ class SchemaStringParameter(BaseSchemaParameterNode):
             "multiline": bool(multiline),
             "placeholder": placeholder,
         }
+
+        if io_kind == "output":
+            # Save text to file when in output mode, using name as filename
+            file_info = _save_text(str(value), name)
+            field["output_files"] = file_info
+
         return (value, field)
 
 

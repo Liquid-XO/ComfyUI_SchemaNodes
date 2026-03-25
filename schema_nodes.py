@@ -61,15 +61,18 @@ def _load_image(filename: str) -> torch.Tensor:
 def _save_image(tensor: torch.Tensor, filename_prefix: str) -> list[dict]:
     """Save [B, H, W, C] tensor to output folder, return file metadata."""
     output_dir = folder_paths.get_output_directory()
+    # Pass image dimensions for template variable support (%width%, %height%)
+    h, w = tensor.shape[1], tensor.shape[2]
     full_output_folder, filename, counter, subfolder, prefix = \
-        folder_paths.get_save_image_path(filename_prefix, output_dir)
+        folder_paths.get_save_image_path(filename_prefix, output_dir, w, h)
 
     results = []
     for i, img_tensor in enumerate(tensor):
         img_np = (img_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
         img = Image.fromarray(img_np)
 
-        file = f"{prefix}_{counter + i:05d}.png"
+        # Use filename (not prefix) and trailing underscore for counter detection
+        file = f"{filename}_{counter + i:05d}_.png"
         img.save(os.path.join(full_output_folder, file))
         results.append({"filename": file, "subfolder": subfolder, "type": "output"})
 
@@ -99,13 +102,14 @@ def _save_video(
 ) -> list[dict]:
     """Save [N, H, W, C] tensor to output folder as video, return file metadata."""
     output_dir = folder_paths.get_output_directory()
-    full_output_folder, filename, counter, subfolder, prefix = \
-        folder_paths.get_save_image_path(filename_prefix, output_dir)
-
-    file = f"{prefix}_{counter:05d}.mp4"
-    output_path = os.path.join(full_output_folder, file)
-
+    # Pass video dimensions for template variable support (%width%, %height%)
     n, h, w, c = tensor.shape
+    full_output_folder, filename, counter, subfolder, prefix = \
+        folder_paths.get_save_image_path(filename_prefix, output_dir, w, h)
+
+    # Use filename (not prefix) and trailing underscore for counter detection
+    file = f"{filename}_{counter:05d}_.mp4"
+    output_path = os.path.join(full_output_folder, file)
 
     cmd = [
         "ffmpeg", "-y",
@@ -138,7 +142,8 @@ def _save_text(text: str, filename_prefix: str) -> list[dict]:
     full_output_folder, filename, counter, subfolder, prefix = \
         folder_paths.get_save_image_path(filename_prefix, output_dir)
 
-    file = f"{prefix}_{counter:05d}.txt"
+    # Use filename (not prefix) and trailing underscore for counter detection
+    file = f"{filename}_{counter:05d}_.txt"
     filepath = os.path.join(full_output_folder, file)
 
     with open(filepath, "w", encoding="utf-8") as f:

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **ComfyCloud image/video parameter support**: `SchemaImageParameter` and `SchemaVideoParameter` now accept both string filenames (local ComfyUI) and dict format `{filename, subfolder, type}` (ComfyCloud storage)
+  - Updated `_load_image()` and `_load_video()` to handle dict input via `folder_paths.get_directory_by_type()`
+  - Backward compatible — existing string filename workflows unaffected
+
 ## [0.3.0] - 2026-03-25
 
 ### Fixed

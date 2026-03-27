@@ -50,9 +50,28 @@ def _numeric_constraints(gt, ge, lt, le, multiple_of):
     return constraints
 
 
-def _load_image(filename: str) -> torch.Tensor:
-    """Load image from input folder, return [1, H, W, C] float32 tensor."""
-    image_path = folder_paths.get_annotated_filepath(filename)
+def _load_image(filename: str | dict) -> torch.Tensor:
+    """Load image from input folder, return [1, H, W, C] float32 tensor.
+    
+    Args:
+        filename: Either a string filename, or dict with {filename, subfolder, type}
+                  (ComfyCloud format)
+    """
+    if isinstance(filename, dict):
+        # ComfyCloud format: {filename, subfolder, type}
+        fname = filename.get("filename", "")
+        subfolder = filename.get("subfolder", "")
+        file_type = filename.get("type", "input")
+        base_dir = folder_paths.get_directory_by_type(file_type)
+        if base_dir is None:
+            base_dir = folder_paths.get_input_directory()
+        if subfolder:
+            image_path = os.path.join(base_dir, subfolder, fname)
+        else:
+            image_path = os.path.join(base_dir, fname)
+    else:
+        image_path = folder_paths.get_annotated_filepath(filename)
+    
     img = Image.open(image_path).convert("RGB")
     img_np = np.array(img, dtype=np.float32) / 255.0
     return torch.from_numpy(img_np).unsqueeze(0)  # [1, H, W, C]
@@ -79,9 +98,28 @@ def _save_image(tensor: torch.Tensor, filename_prefix: str) -> list[dict]:
     return results
 
 
-def _load_video(filename: str) -> torch.Tensor:
-    """Load video from input folder, return [N, H, W, C] float32 tensor."""
-    video_path = folder_paths.get_annotated_filepath(filename)
+def _load_video(filename: str | dict) -> torch.Tensor:
+    """Load video from input folder, return [N, H, W, C] float32 tensor.
+    
+    Args:
+        filename: Either a string filename, or dict with {filename, subfolder, type}
+                  (ComfyCloud format)
+    """
+    if isinstance(filename, dict):
+        # ComfyCloud format: {filename, subfolder, type}
+        fname = filename.get("filename", "")
+        subfolder = filename.get("subfolder", "")
+        file_type = filename.get("type", "input")
+        base_dir = folder_paths.get_directory_by_type(file_type)
+        if base_dir is None:
+            base_dir = folder_paths.get_input_directory()
+        if subfolder:
+            video_path = os.path.join(base_dir, subfolder, fname)
+        else:
+            video_path = os.path.join(base_dir, fname)
+    else:
+        video_path = folder_paths.get_annotated_filepath(filename)
+    
     cap = cv2.VideoCapture(video_path)
 
     frames = []
@@ -511,7 +549,8 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
             # Input mode: value_in is filename string -> load to tensor
             if value_in is None:
                 raise ValueError(f"Input image '{name}' requires a filename")
-            if isinstance(value_in, str):
+            if isinstance(value_in, (str, dict)):
+                # String filename or dict {filename, subfolder, type} (ComfyCloud)
                 image_tensor = _load_image(value_in)
             else:
                 # Already a tensor (connected from another node)
@@ -569,7 +608,8 @@ class SchemaVideoParameter(BaseSchemaMediaParameter):
             # Input mode: value_in is filename string -> load to tensor
             if value_in is None:
                 raise ValueError(f"Input video '{name}' requires a filename")
-            if isinstance(value_in, str):
+            if isinstance(value_in, (str, dict)):
+                # String filename or dict {filename, subfolder, type} (ComfyCloud)
                 video_tensor = _load_video(value_in)
             else:
                 # Already a tensor (connected from another node)

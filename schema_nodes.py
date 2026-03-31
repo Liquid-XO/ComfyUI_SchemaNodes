@@ -77,22 +77,50 @@ def _load_image(filename: str | dict) -> torch.Tensor:
     return torch.from_numpy(img_np).unsqueeze(0)  # [1, H, W, C]
 
 
-def _save_image(tensor: torch.Tensor, filename_prefix: str) -> list[dict]:
-    """Save [B, H, W, C] tensor to output folder, return file metadata."""
+def _save_image(
+    tensor: torch.Tensor,
+    filename_prefix: str,
+    save_format: str = "webp",
+    quality: int = 90,
+) -> list[dict]:
+    """Save [B, H, W, C] tensor to output folder, return file metadata.
+    
+    Args:
+        tensor: Image tensor [B, H, W, C] float32 0-1
+        filename_prefix: Prefix for output filename
+        save_format: "webp", "png", or "jpg"
+        quality: 1-100, applies to webp/jpg (ignored for png)
+    """
     output_dir = folder_paths.get_output_directory()
     # Pass image dimensions for template variable support (%width%, %height%)
     h, w = tensor.shape[1], tensor.shape[2]
     full_output_folder, filename, counter, subfolder, prefix = \
         folder_paths.get_save_image_path(filename_prefix, output_dir, w, h)
 
+    # Normalize format
+    fmt = save_format.lower().strip()
+    if fmt == "jpeg":
+        fmt = "jpg"
+    ext = fmt if fmt in ("webp", "png", "jpg") else "webp"
+
     results = []
     for i, img_tensor in enumerate(tensor):
         img_np = (img_tensor.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
         img = Image.fromarray(img_np)
 
+        # JPEG doesn't support alpha channel
+        if ext == "jpg" and img.mode == "RGBA":
+            img = img.convert("RGB")
+
         # Use filename (not prefix) and trailing underscore for counter detection
-        file = f"{filename}_{counter + i:05d}_.png"
-        img.save(os.path.join(full_output_folder, file))
+        file = f"{filename}_{counter + i:05d}_.{ext}"
+        filepath = os.path.join(full_output_folder, file)
+
+        if ext == "png":
+            img.save(filepath)
+        else:  # webp or jpg
+            img.save(filepath, quality=quality)
+
         results.append({"filename": file, "subfolder": subfolder, "type": "output"})
 
     return results
@@ -525,6 +553,13 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
     type_label = "image"
     RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")
 
+    @classmethod
+    def type_required_inputs(cls):
+        base = super().type_required_inputs()
+        base["save_format"] = (["webp", "png", "jpg"], {"default": "webp"})
+        base["quality"] = ("INT", {"default": 90, "min": 1, "max": 100})
+        return base
+
     def execute(
         self,
         name,
@@ -533,6 +568,8 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
         required,
         accepted_formats,
         filename_prefix,
+        save_format,
+        quality,
         value_in=None,
     ):
         field = self._field_schema(
@@ -561,7 +598,7 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
             # Output mode: value_in is tensor -> save to file
             if value_in is None:
                 raise ValueError(f"Output image '{name}' requires an image tensor")
-            file_info = _save_image(value_in, filename_prefix)
+            file_info = _save_image(value_in, filename_prefix, save_format, quality)
             field["output_files"] = file_info
             return (value_in, field)  # Pass through tensor, metadata in field
 

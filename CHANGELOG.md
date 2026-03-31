@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable image save format**: `SchemaImageParameter` now supports `save_format` and `quality` options for output mode
+  - `save_format`: Choose between "webp" (default), "png", or "jpg"
+  - `quality`: 1-100 (default 90) — applies to WebP and JPEG, ignored for PNG
+  - JPEG automatically converts RGBA → RGB (no alpha support)
+  - WebP default provides better compression than previous PNG-only behavior
+
 ### Fixed
 
 - **ComfyCloud image/video parameter support**: `SchemaImageParameter` and `SchemaVideoParameter` now accept both string filenames (local ComfyUI) and dict format `{filename, subfolder, type}` (ComfyCloud storage)

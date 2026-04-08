@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **SCHEMA_FIELD output removed from all parameter nodes**: Nodes now return only the typed value, not the field metadata tuple
+  - `RETURN_TYPES` changed from `("TYPE", "SCHEMA_FIELD")` to `("TYPE",)` for all 8 parameter node classes
+  - `RETURN_NAMES` changed from `("value", "field")` to `("value",)`
+  - Internal `_field_schema()` method retained for potential future use (Phase 2 cleanup pending)
+  - Simplifies node connections — downstream nodes receive values directly
+
 ### Added
 
 - **Configurable image save format**: `SchemaImageParameter` now supports `save_format` and `quality` options for output mode

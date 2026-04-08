@@ -1,7 +1,5 @@
 import os
-import subprocess
 
-import cv2
 import folder_paths
 import numpy as np
 import torch
@@ -126,81 +124,6 @@ def _save_image(
     return results
 
 
-def _load_video(filename: str | dict) -> torch.Tensor:
-    """Load video from input folder, return [N, H, W, C] float32 tensor.
-    
-    Args:
-        filename: Either a string filename, or dict with {filename, subfolder, type}
-                  (ComfyCloud format)
-    """
-    if isinstance(filename, dict):
-        # ComfyCloud format: {filename, subfolder, type}
-        fname = filename.get("filename", "")
-        subfolder = filename.get("subfolder", "")
-        file_type = filename.get("type", "input")
-        base_dir = folder_paths.get_directory_by_type(file_type)
-        if base_dir is None:
-            base_dir = folder_paths.get_input_directory()
-        if subfolder:
-            video_path = os.path.join(base_dir, subfolder, fname)
-        else:
-            video_path = os.path.join(base_dir, fname)
-    else:
-        video_path = folder_paths.get_annotated_filepath(filename)
-    
-    cap = cv2.VideoCapture(video_path)
-
-    frames = []
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_np = np.array(frame_rgb, dtype=np.float32) / 255.0
-        frames.append(frame_np)
-    cap.release()
-
-    return torch.from_numpy(np.stack(frames))  # [N, H, W, C]
-
-
-def _save_video(
-    tensor: torch.Tensor, filename_prefix: str, frame_rate: float = 24.0
-) -> list[dict]:
-    """Save [N, H, W, C] tensor to output folder as video, return file metadata."""
-    output_dir = folder_paths.get_output_directory()
-    # Pass video dimensions for template variable support (%width%, %height%)
-    n, h, w, c = tensor.shape
-    full_output_folder, filename, counter, subfolder, prefix = \
-        folder_paths.get_save_image_path(filename_prefix, output_dir, w, h)
-
-    # Use filename (not prefix) and trailing underscore for counter detection
-    file = f"{filename}_{counter:05d}_.mp4"
-    output_path = os.path.join(full_output_folder, file)
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo",
-        "-vcodec", "rawvideo",
-        "-s", f"{w}x{h}",
-        "-pix_fmt", "rgb24",
-        "-r", str(frame_rate),
-        "-i", "-",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        output_path
-    ]
-
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
-    for frame in tensor:
-        frame_bytes = (
-            (frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8).tobytes()
-        )
-        proc.stdin.write(frame_bytes)
-    proc.stdin.close()
-    proc.wait()
-
-    return [{"filename": file, "subfolder": subfolder, "type": "output"}]
-
 
 def _save_text(text: str, filename_prefix: str) -> list[dict]:
     """Save text string to output folder, return file metadata."""
@@ -261,7 +184,7 @@ class BaseSchemaParameterNode:
         return float("nan")
 
     RETURN_TYPES = ()
-    RETURN_NAMES = ("value", "field")
+    RETURN_NAMES = ("value",)
 
     def _resolve_value(self, value_in, fallback):
         return fallback if value_in is None else value_in
@@ -288,7 +211,7 @@ class SchemaStringParameter(BaseSchemaParameterNode):
     python_type = "str"
     default_value = ""
     type_label = "string"
-    RETURN_TYPES = ("STRING", "SCHEMA_FIELD")
+    RETURN_TYPES = ("STRING",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -338,7 +261,7 @@ class SchemaStringParameter(BaseSchemaParameterNode):
             file_info = _save_text(str(value), name)
             field["output_files"] = file_info
 
-        return (value, field)
+        return (value,)
 
 
 class SchemaIntegerParameter(BaseSchemaParameterNode):
@@ -347,7 +270,7 @@ class SchemaIntegerParameter(BaseSchemaParameterNode):
     python_type = "int"
     default_value = 0
     type_label = "integer"
-    RETURN_TYPES = ("INT", "SCHEMA_FIELD")
+    RETURN_TYPES = ("INT",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -391,7 +314,7 @@ class SchemaIntegerParameter(BaseSchemaParameterNode):
                 int(multiple_of),
             )
         )
-        return (value, field)
+        return (value,)
 
 
 class SchemaFloatParameter(BaseSchemaParameterNode):
@@ -400,7 +323,7 @@ class SchemaFloatParameter(BaseSchemaParameterNode):
     python_type = "float"
     default_value = 0.0
     type_label = "float"
-    RETURN_TYPES = ("FLOAT", "SCHEMA_FIELD")
+    RETURN_TYPES = ("FLOAT",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -450,7 +373,7 @@ class SchemaFloatParameter(BaseSchemaParameterNode):
         )
         if round_to > 0:
             field["precision"] = int(round_to)
-        return (value, field)
+        return (value,)
 
 
 class SchemaBooleanParameter(BaseSchemaParameterNode):
@@ -459,7 +382,7 @@ class SchemaBooleanParameter(BaseSchemaParameterNode):
     python_type = "bool"
     default_value = False
     type_label = "boolean"
-    RETURN_TYPES = ("BOOLEAN", "SCHEMA_FIELD")
+    RETURN_TYPES = ("BOOLEAN",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -484,7 +407,7 @@ class SchemaBooleanParameter(BaseSchemaParameterNode):
             required=required,
         )
         field["default"] = bool(default)
-        return (value, field)
+        return (value,)
 
 
 class SchemaEnumParameter(BaseSchemaParameterNode):
@@ -493,7 +416,7 @@ class SchemaEnumParameter(BaseSchemaParameterNode):
     python_type = "str"
     default_value = ""
     type_label = "enum"
-    RETURN_TYPES = ("STRING", "SCHEMA_FIELD")
+    RETURN_TYPES = ("STRING",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -526,7 +449,7 @@ class SchemaEnumParameter(BaseSchemaParameterNode):
         field["enum"] = option_list
         if allow_custom_value:
             field["allow_custom_value"] = True
-        return (str(value), field)
+        return (str(value),)
 
 
 class BaseSchemaMediaParameter(BaseSchemaParameterNode):
@@ -551,7 +474,7 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
     json_type = "image"
     python_type = "IMAGE"
     type_label = "image"
-    RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")
+    RETURN_TYPES = ("IMAGE",)
 
     @classmethod
     def type_required_inputs(cls):
@@ -592,7 +515,7 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
             else:
                 # Already a tensor (connected from another node)
                 image_tensor = value_in
-            return (image_tensor, field)
+            return (image_tensor,)
 
         else:  # io_kind == "output"
             # Output mode: value_in is tensor -> save to file
@@ -600,24 +523,24 @@ class SchemaImageParameter(BaseSchemaMediaParameter):
                 raise ValueError(f"Output image '{name}' requires an image tensor")
             file_info = _save_image(value_in, filename_prefix, save_format, quality)
             field["output_files"] = file_info
-            return (value_in, field)  # Pass through tensor, metadata in field
+            return (value_in,)  # Pass through tensor
 
 
 class SchemaVideoParameter(BaseSchemaMediaParameter):
-    output_type = "IMAGE"  # VIDEO is batched IMAGE in VHS style
+    """Schema parameter for video file paths.
+    
+    Unlike SchemaImageParameter which handles tensor conversion,
+    this node simply passes through file path strings. Users should
+    wire VHS nodes (LoadVideoPath, VideoCombine) for tensor conversion.
+    
+    Input mode: value_in is cloud filename from MCP upload
+    Output mode: value_in is path from upstream VHS node
+    """
+    output_type = "STRING"
     json_type = "video"
-    python_type = "VIDEO"
+    python_type = "STRING"
     type_label = "video"
-    RETURN_TYPES = ("IMAGE", "SCHEMA_FIELD")  # Returns IMAGE (batched frames)
-
-    @classmethod
-    def type_required_inputs(cls):
-        base = super().type_required_inputs()
-        base["frame_rate"] = (
-            "FLOAT",
-            {"default": 24.0, "min": 1.0, "max": 120.0, "step": 0.1},
-        )
-        return base
+    RETURN_TYPES = ("STRING",)
 
     def execute(
         self,
@@ -627,7 +550,6 @@ class SchemaVideoParameter(BaseSchemaMediaParameter):
         required,
         accepted_formats,
         filename_prefix,
-        frame_rate,
         value_in=None,
     ):
         field = self._field_schema(
@@ -639,27 +561,14 @@ class SchemaVideoParameter(BaseSchemaMediaParameter):
         formats = _clean_examples(accepted_formats)
         if formats:
             field["accepted_formats"] = formats
-        field["frame_rate"] = frame_rate
 
-        if io_kind == "input":
-            # Input mode: value_in is filename string -> load to tensor
-            if value_in is None:
-                raise ValueError(f"Input video '{name}' requires a filename")
-            if isinstance(value_in, (str, dict)):
-                # String filename or dict {filename, subfolder, type} (ComfyCloud)
-                video_tensor = _load_video(value_in)
-            else:
-                # Already a tensor (connected from another node)
-                video_tensor = value_in
-            return (video_tensor, field)
-
-        else:  # io_kind == "output"
-            # Output mode: value_in is tensor -> save to file
-            if value_in is None:
-                raise ValueError(f"Output video '{name}' requires a video tensor")
-            file_info = _save_video(value_in, filename_prefix, frame_rate)
-            field["output_files"] = file_info
-            return (value_in, field)  # Pass through tensor, metadata in field
+        # Both modes: simple string pass-through
+        # Input: value_in is cloud filename from MCP upload (e.g., "video_abc123.mp4")
+        # Output: value_in is path from upstream VHS node
+        if value_in is None:
+            mode = "Input" if io_kind == "input" else "Output"
+            raise ValueError(f"{mode} video '{name}' requires a file path")
+        return (str(value_in),)
 
 
 class SchemaAudioParameter(BaseSchemaMediaParameter):
@@ -667,7 +576,7 @@ class SchemaAudioParameter(BaseSchemaMediaParameter):
     json_type = "audio"
     python_type = "AUDIO"
     type_label = "audio"
-    RETURN_TYPES = ("AUDIO", "SCHEMA_FIELD")
+    RETURN_TYPES = ("AUDIO",)
 
 
 SCHEMA_CLASS_MAPPINGS = {
